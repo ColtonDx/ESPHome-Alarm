@@ -1,0 +1,681 @@
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+## Hornet Nest Alarm Panel v1.2 (wESP32) - Ethernet, local alarm, Wiegand keypad
+## Hardware config from https://github.com/taconsultingllc/hornet-nest-alarm-panel
+## (MIT, Copyright 2025 Technology Automation Consulting LLC)
+##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+
+substitutions:
+  name: hornet-nest
+  friendly_name: Hornet Nest Alarm Panel
+
+  # Comma-separated list of valid PINs, e.g. "1234,5678"
+  alarm_code: !secret alarm_master_code
+
+  sensor_debounce_time: 500ms
+  sensor_inverted: "false"  # "false" for NC sensors, "true" for NO sensors
+
+  ##################
+  #     ZONES      #
+  ##################
+  # name:  what the zone is (shown in Home Assistant)
+  # alarm: true  -> opening it while armed sets off the alarm
+  #        false -> reported to Home Assistant only (flood sensors, unused zones)
+  zone01: { name: "Front Door", alarm: true }
+  zone02: { name: "Mud Room Door", alarm: true }
+  zone03: { name: "Maintenance Hall Door", alarm: true }
+  zone04: { name: "Garage Front Door", alarm: true }
+  zone05: { name: "Garage Rear Door", alarm: true }
+  zone06: { name: "Garage Stairwell Door", alarm: true }
+  zone07: { name: "Garage Overhead Door", alarm: true }
+  zone08: { name: "Zone 08", alarm: false }
+  zone09: { name: "Zone 09", alarm: false }
+  zone10: { name: "Zone 10", alarm: false }
+  zone11: { name: "Zone 11", alarm: false }
+  zone12: { name: "Zone 12", alarm: false }
+  zone13: { name: "Zone 13", alarm: false }
+  zone14: { name: "Zone 14", alarm: false }
+  zone15: { name: "Zone 15", alarm: false }
+  zone16: { name: "Zone 16", alarm: false }
+  zone17: { name: "Zone 17", alarm: false }
+  zone18: { name: "Zone 18", alarm: false }
+  zone19: { name: "Zone 19", alarm: false }
+  zone20: { name: "Zone 20", alarm: false }
+  zone21: { name: "Zone 21", alarm: false }
+  zone22: { name: "Zone 22", alarm: false }
+  zone23: { name: "Zone 23", alarm: false }
+  zone24: { name: "Zone 24", alarm: false }
+  zone25: { name: "Zone 25", alarm: false }
+  zone26: { name: "Zone 26", alarm: false }
+  zone27: { name: "Zone 27", alarm: false }
+  zone28: { name: "Zone 28", alarm: false }
+  zone29: { name: "Zone 29", alarm: false }
+  zone30: { name: "Zone 30", alarm: false }
+  zone31: { name: "Zone 31", alarm: false }
+  zone32: { name: "Zone 32", alarm: false }
+  zone33: { name: "Zone 33", alarm: false }
+  zone34: { name: "Zone 34", alarm: false }
+  zone35: { name: "Zone 35", alarm: false }
+  zone36: { name: "Zone 36", alarm: false }
+  zone37: { name: "Zone 37", alarm: false }
+  zone38: { name: "Zone 38", alarm: false }
+  zone39: { name: "Zone 39", alarm: false }
+  zone40: { name: "Zone 40", alarm: false }
+  zone41: { name: "Zone 41", alarm: false }
+  zone42: { name: "Zone 42", alarm: false }
+
+  ##################
+  #     KEYPAD     #
+  ##################
+  keypad_d0: GPIO18      # Wiegand D0 terminal (green)
+  keypad_d1: GPIO13      # Wiegand D1 terminal (white)
+  keypad_led: GPIO14     # J53 pin 5 - LED control (pulled to ground = on)
+  keypad_beep: GPIO33    # J53 pin 9 - beeper control (pulled to ground = on)
+  siren: output_1        # OUT 1
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: taconsulting.hornet-nest-alarm-panel
+    version: "1.2"
+  on_boot:
+    priority: -100
+    then:
+      - text_sensor.template.publish:
+          id: device_id
+          state: !lambda 'return get_mac_address();'
+      - script.execute: update_keypad
+
+esp32:
+  board: wesp32
+  framework:
+    type: arduino
+
+logger:
+
+ota:
+  - platform: esphome
+
+web_server:
+  port: 80
+  version: 3
+
+ethernet:
+  type: RTL8201
+  mdc_pin: GPIO16
+  mdio_pin: GPIO17
+  clk:
+    pin: GPIO0
+    mode: CLK_EXT_IN
+  phy_addr: 0
+  phy_registers:
+    - address: 0x10
+      value: 0x1FFA
+      page_id: 0x07
+  manual_ip:
+    static_ip: 10.10.102.11
+    gateway: 10.10.102.1
+    subnet: 255.255.255.0
+    dns1: 10.10.102.1
+
+api:
+  actions:
+    - action: arm_away
+      then:
+        - state_machine.transition: arm_away
+    - action: arm_home
+      then:
+        - state_machine.transition: arm_home
+    - action: disarm
+      variables:
+        code: string
+      then:
+        - script.execute:
+            id: check_code
+            code: !lambda 'return code;'
+    - action: play_rtttl
+      variables:
+        song_str: string
+      then:
+        - rtttl.play: !lambda 'return song_str;'
+
+##################
+#    HARDWARE    #
+##################
+i2c:
+  id: bus_a
+  sda: 15
+  scl: 4
+  scan: true
+  frequency: 200kHz
+
+mcp23017:
+  - id: mcp23017_1  # Zones 1-14
+    address: 0x20
+  - id: mcp23017_2  # Zones 15-28
+    address: 0x21
+  - id: mcp23017_3  # Zones 29-42
+    address: 0x22
+  - id: mcp23017_4  # +12V outputs & misc I/O
+    address: 0x23
+
+output:
+  - platform: ledc
+    id: buzzer_output  # onboard piezo - wESP32 IO23
+    pin: GPIO23
+
+  - platform: gpio
+    id: keypad_led
+    pin:
+      number: ${keypad_led}
+      mode:
+        output: true
+        open_drain: true
+    inverted: true
+
+  - platform: gpio
+    id: keypad_beep
+    pin:
+      number: ${keypad_beep}
+      mode:
+        output: true
+        open_drain: true
+    inverted: true
+
+rtttl:
+  output: buzzer_output
+
+switch:
+  - platform: restart
+    name: Reboot Alarm Panel
+
+  # +12V MOSFET outputs (MCP23017_4 IO0-IO5)
+  - { platform: gpio, id: output_1, name: Output 1, pin: { mcp23xxx: mcp23017_4, number: 0, mode: { output: true } } }
+  - { platform: gpio, id: output_2, name: Output 2, pin: { mcp23xxx: mcp23017_4, number: 1, mode: { output: true } } }
+  - { platform: gpio, id: output_3, name: Output 3, pin: { mcp23xxx: mcp23017_4, number: 2, mode: { output: true } } }
+  - { platform: gpio, id: output_4, name: Output 4, pin: { mcp23xxx: mcp23017_4, number: 3, mode: { output: true } } }
+  - { platform: gpio, id: output_5, name: Output 5, pin: { mcp23xxx: mcp23017_4, number: 4, mode: { output: true } } }
+  - { platform: gpio, id: output_6, name: Output 6, pin: { mcp23xxx: mcp23017_4, number: 5, mode: { output: true } } }
+
+  # Smoke detector power (MCP23017_4 IO6). Turning it off resets the detectors;
+  # it turns back on after 5 seconds.
+  - platform: gpio
+    id: smoke_pwr
+    name: Smoke Detector Power
+    pin: { mcp23xxx: mcp23017_4, number: 6, mode: { output: true } }
+    restore_mode: ALWAYS_ON
+    on_turn_off:
+      - delay: 5s
+      - switch.turn_on: smoke_pwr
+
+  - platform: output
+    id: buzzer
+    name: Piezo Buzzer
+    icon: mdi:bullhorn
+    output: buzzer_output
+
+  # Sound the siren when the alarm triggers
+  - platform: template
+    id: trigger_siren
+    name: ${friendly_name} Trigger Siren
+    icon: mdi:bullhorn
+    optimistic: true
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_OFF
+
+##################
+# BINARY SENSORS #
+##################
+binary_sensor:
+  # Zones 1-42. Pins: Z1-Z7 = 8-14, Z8-Z14 = 0-6 on each chip.
+  - &zone
+    platform: gpio
+    id: zone01
+    name: ${zone01.name}
+    device_class: door
+    pin: &pin { mcp23xxx: mcp23017_1, number: 8, mode: { input: true, pullup: false }, inverted: $sensor_inverted }
+    filters:
+      - delayed_on_off: $sensor_debounce_time
+    on_state:
+      - script.execute: evaluate_alarm
+  - { <<: *zone, id: zone02, name: "${zone02.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 9 } }
+  - { <<: *zone, id: zone03, name: "${zone03.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 10 } }
+  - { <<: *zone, id: zone04, name: "${zone04.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 11 } }
+  - { <<: *zone, id: zone05, name: "${zone05.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 12 } }
+  - { <<: *zone, id: zone06, name: "${zone06.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 13 } }
+  - { <<: *zone, id: zone07, name: "${zone07.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 14 } }
+  - { <<: *zone, id: zone08, name: "${zone08.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 0 } }
+  - { <<: *zone, id: zone09, name: "${zone09.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 1 } }
+  - { <<: *zone, id: zone10, name: "${zone10.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 2 } }
+  - { <<: *zone, id: zone11, name: "${zone11.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 3 } }
+  - { <<: *zone, id: zone12, name: "${zone12.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 4 } }
+  - { <<: *zone, id: zone13, name: "${zone13.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 5 } }
+  - { <<: *zone, id: zone14, name: "${zone14.name}", pin: { <<: *pin, mcp23xxx: mcp23017_1, number: 6 } }
+
+  - { <<: *zone, id: zone15, name: "${zone15.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 8 } }
+  - { <<: *zone, id: zone16, name: "${zone16.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 9 } }
+  - { <<: *zone, id: zone17, name: "${zone17.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 10 } }
+  - { <<: *zone, id: zone18, name: "${zone18.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 11 } }
+  - { <<: *zone, id: zone19, name: "${zone19.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 12 } }
+  - { <<: *zone, id: zone20, name: "${zone20.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 13 } }
+  - { <<: *zone, id: zone21, name: "${zone21.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 14 } }
+  - { <<: *zone, id: zone22, name: "${zone22.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 0 } }
+  - { <<: *zone, id: zone23, name: "${zone23.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 1 } }
+  - { <<: *zone, id: zone24, name: "${zone24.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 2 } }
+  - { <<: *zone, id: zone25, name: "${zone25.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 3 } }
+  - { <<: *zone, id: zone26, name: "${zone26.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 4 } }
+  - { <<: *zone, id: zone27, name: "${zone27.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 5 } }
+  - { <<: *zone, id: zone28, name: "${zone28.name}", pin: { <<: *pin, mcp23xxx: mcp23017_2, number: 6 } }
+
+  - { <<: *zone, id: zone29, name: "${zone29.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 8 } }
+  - { <<: *zone, id: zone30, name: "${zone30.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 9 } }
+  - { <<: *zone, id: zone31, name: "${zone31.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 10 } }
+  - { <<: *zone, id: zone32, name: "${zone32.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 11 } }
+  - { <<: *zone, id: zone33, name: "${zone33.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 12 } }
+  - { <<: *zone, id: zone34, name: "${zone34.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 13 } }
+  - { <<: *zone, id: zone35, name: "${zone35.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 14 } }
+  - { <<: *zone, id: zone36, name: "${zone36.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 0 } }
+  - { <<: *zone, id: zone37, name: "${zone37.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 1 } }
+  - { <<: *zone, id: zone38, name: "${zone38.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 2 } }
+  - { <<: *zone, id: zone39, name: "${zone39.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 3 } }
+  - { <<: *zone, id: zone40, name: "${zone40.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 4 } }
+  - { <<: *zone, id: zone41, name: "${zone41.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 5 } }
+  - { <<: *zone, id: zone42, name: "${zone42.name}", pin: { <<: *pin, mcp23xxx: mcp23017_3, number: 6 } }
+
+  # Fuse monitoring - sounds the onboard piezo if a fuse blows
+  - platform: gpio
+    id: fuse_12v
+    name: 12V Fuse Status
+    icon: mdi:fuse
+    device_class: problem
+    pin: { number: GPIO34, mode: { input: true, pullup: false } }
+    filters:
+      - delayed_on_off: $sensor_debounce_time
+    on_state:
+      - if:
+          condition:
+            binary_sensor.is_on: fuse_12v
+          then:
+            - switch.turn_on: buzzer
+          else:
+            - switch.turn_off: buzzer
+
+  - platform: gpio
+    id: fuse_3v
+    name: 3.3V Fuse Status
+    icon: mdi:fuse
+    device_class: problem
+    pin: { number: GPIO36, mode: { input: true, pullup: false }, inverted: true }
+    filters:
+      - delayed_on_off: $sensor_debounce_time
+    on_state:
+      - if:
+          condition:
+            binary_sensor.is_on: fuse_3v
+          then:
+            - switch.turn_on: buzzer
+          else:
+            - switch.turn_off: buzzer
+
+  # 3-12V DC trigger input
+  - platform: gpio
+    id: dc_trigger
+    name: 3-12v DC Trigger
+    icon: mdi:smoke-detector-alert
+    device_class: problem
+    pin: { number: GPIO35, mode: { input: true, pullup: false }, inverted: true }
+    filters:
+      - delayed_on_off: $sensor_debounce_time
+
+  # J53 I/O header inputs (pins 5 and 9 are used by the keypad)
+  - { platform: gpio, id: misc_01, name: Misc IO - Pin 01, pin: { number: GPIO2,  mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_03, name: Misc IO - Pin 03, pin: { number: GPIO12, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_07, name: Misc IO - Pin 07, pin: { number: GPIO5,  mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_04, name: Misc IO - Pin 04, pin: { mcp23xxx: mcp23017_4, number: 10, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_06, name: Misc IO - Pin 06, pin: { mcp23xxx: mcp23017_4, number: 11, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_08, name: Misc IO - Pin 08, pin: { mcp23xxx: mcp23017_4, number: 12, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_10, name: Misc IO - Pin 10, pin: { mcp23xxx: mcp23017_4, number: 13, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_12, name: Misc IO - Pin 12, pin: { mcp23xxx: mcp23017_4, number: 14, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+  - { platform: gpio, id: misc_14, name: Misc IO - Pin 14, pin: { mcp23xxx: mcp23017_4, number: 15, mode: { input: true, pullup: false }, inverted: true }, filters: [ delayed_on_off: $sensor_debounce_time ] }
+
+##################
+# STATE MACHINE  #
+##################
+# Copied from the Konnected Pro config.
+external_components:
+  - source: github://muxa/esphome-state-machine
+    components: [state_machine]
+
+state_machine:
+  id: alarm_states
+  diagram: mermaid
+  initial_state: disarmed
+  states:
+    - name: disarmed
+      on_enter:
+        - script.execute: update_keypad
+
+    - name: arming
+      on_enter:
+        - script.execute: flash_keypad_led
+        - script.execute: beeper_countdown
+        - delay: !lambda 'return (uint32_t) (id(arming_timeout).state * 1000);'
+        - state_machine.transition: arm_away
+      on_leave:
+        - script.stop: flash_keypad_led
+        - script.stop: beeper_countdown
+
+    - name: armed_away
+      on_enter:
+        - script.execute: update_keypad
+
+    - name: armed_home
+      on_enter:
+        - script.execute: update_keypad
+
+    - name: pending
+      on_enter:
+        - script.execute: update_keypad
+        - delay: !lambda 'return (uint32_t) (id(pending_timeout).state * 1000);'
+        - state_machine.transition: trigger
+
+    - name: triggered
+      on_enter:
+        - script.execute: flash_keypad_led
+        - script.execute: beeper_countdown
+        - if:
+            condition:
+              switch.is_on: trigger_siren
+            then:
+              - switch.turn_on: ${siren}
+        - delay: !lambda 'return (uint32_t) (id(trigger_timeout).state * 60 * 1000);'
+        - state_machine.transition: arm_away
+      on_leave:
+        - switch.turn_off: ${siren}
+
+  inputs:
+    - name: arm_away
+      transitions:
+        - disarmed -> arming
+        - arming -> armed_away
+        - triggered -> armed_away
+
+    - name: arm_home
+      transitions:
+        - disarmed -> armed_home
+
+    - name: disarm
+      transitions:
+        - arming -> disarmed
+        - armed_away -> disarmed
+        - armed_home -> disarmed
+        - pending -> disarmed
+        - triggered -> disarmed
+
+    - name: toggle
+      transitions:
+        - arming -> disarmed
+        - armed_away -> disarmed
+        - armed_home -> disarmed
+        - pending -> disarmed
+        - triggered -> disarmed
+        - disarmed -> arming
+
+    - name: trip
+      transitions:
+        - armed_away -> pending
+        - armed_home -> pending
+
+    - name: trigger
+      transitions:
+        - armed_away -> triggered
+        - armed_home -> triggered
+        - pending -> triggered
+
+##################
+#    SCRIPTS     #
+##################
+script:
+  # Trip the alarm if armed and any zone with alarm: true is open
+  - id: evaluate_alarm
+    then:
+      - if:
+          condition:
+            and:
+              - or:
+                  - state_machine.state: armed_away
+                  - state_machine.state: armed_home
+              - lambda: |-
+                  return
+                    (${zone01.alarm|lower} && id(zone01).state) ||
+                    (${zone02.alarm|lower} && id(zone02).state) ||
+                    (${zone03.alarm|lower} && id(zone03).state) ||
+                    (${zone04.alarm|lower} && id(zone04).state) ||
+                    (${zone05.alarm|lower} && id(zone05).state) ||
+                    (${zone06.alarm|lower} && id(zone06).state) ||
+                    (${zone07.alarm|lower} && id(zone07).state) ||
+                    (${zone08.alarm|lower} && id(zone08).state) ||
+                    (${zone09.alarm|lower} && id(zone09).state) ||
+                    (${zone10.alarm|lower} && id(zone10).state) ||
+                    (${zone11.alarm|lower} && id(zone11).state) ||
+                    (${zone12.alarm|lower} && id(zone12).state) ||
+                    (${zone13.alarm|lower} && id(zone13).state) ||
+                    (${zone14.alarm|lower} && id(zone14).state) ||
+                    (${zone15.alarm|lower} && id(zone15).state) ||
+                    (${zone16.alarm|lower} && id(zone16).state) ||
+                    (${zone17.alarm|lower} && id(zone17).state) ||
+                    (${zone18.alarm|lower} && id(zone18).state) ||
+                    (${zone19.alarm|lower} && id(zone19).state) ||
+                    (${zone20.alarm|lower} && id(zone20).state) ||
+                    (${zone21.alarm|lower} && id(zone21).state) ||
+                    (${zone22.alarm|lower} && id(zone22).state) ||
+                    (${zone23.alarm|lower} && id(zone23).state) ||
+                    (${zone24.alarm|lower} && id(zone24).state) ||
+                    (${zone25.alarm|lower} && id(zone25).state) ||
+                    (${zone26.alarm|lower} && id(zone26).state) ||
+                    (${zone27.alarm|lower} && id(zone27).state) ||
+                    (${zone28.alarm|lower} && id(zone28).state) ||
+                    (${zone29.alarm|lower} && id(zone29).state) ||
+                    (${zone30.alarm|lower} && id(zone30).state) ||
+                    (${zone31.alarm|lower} && id(zone31).state) ||
+                    (${zone32.alarm|lower} && id(zone32).state) ||
+                    (${zone33.alarm|lower} && id(zone33).state) ||
+                    (${zone34.alarm|lower} && id(zone34).state) ||
+                    (${zone35.alarm|lower} && id(zone35).state) ||
+                    (${zone36.alarm|lower} && id(zone36).state) ||
+                    (${zone37.alarm|lower} && id(zone37).state) ||
+                    (${zone38.alarm|lower} && id(zone38).state) ||
+                    (${zone39.alarm|lower} && id(zone39).state) ||
+                    (${zone40.alarm|lower} && id(zone40).state) ||
+                    (${zone41.alarm|lower} && id(zone41).state) ||
+                    (${zone42.alarm|lower} && id(zone42).state);
+          then:
+            - state_machine.transition: trip
+
+  # Disarm on a valid code; 3 wrong codes in a row triggers the alarm
+  - id: check_code
+    parameters:
+      code: string
+    then:
+      - lambda: |-
+          std::string codes = ",${alarm_code},";
+          codes.erase(std::remove(codes.begin(), codes.end(), ' '), codes.end());
+          if (!code.empty() && codes.find("," + code + ",") != std::string::npos) {
+            id(incorrect_codes) = 0;
+            id(alarm_states).transition("disarm");
+          } else if (++id(incorrect_codes) >= 3) {
+            id(alarm_states).transition("trigger");
+          }
+          id(incorrect_codes_sensor).update();
+
+  - id: update_keypad
+    then:
+      - if:
+          condition:
+            or:
+              - state_machine.state: disarmed
+              - state_machine.state: triggered
+          then:
+            - script.stop: flash_keypad_led
+            - script.stop: beeper_countdown
+            - output.turn_off: keypad_beep
+            - output.turn_on: keypad_led
+          else:
+            - if:
+                condition:
+                  or:
+                    - state_machine.state: arming
+                    - state_machine.state: pending
+                then:
+                  - script.execute: flash_keypad_led
+                  - script.execute: beeper_countdown
+                else:
+                  - script.stop: flash_keypad_led
+                  - script.stop: beeper_countdown
+                  - output.turn_off: keypad_beep
+                  - output.turn_off: keypad_led
+
+  - id: flash_keypad_led
+    mode: restart
+    then:
+      - output.turn_on: keypad_led
+      - delay: 250ms
+      - output.turn_off: keypad_led
+      - delay: 250ms
+      - script.execute: flash_keypad_led
+
+  - id: beeper_countdown
+    mode: restart
+    then:
+      - output.turn_on: keypad_beep
+      - delay: 200ms
+      - output.turn_off: keypad_beep
+      - delay: 750ms
+      - script.execute: beeper_countdown
+
+globals:
+  - id: incorrect_codes
+    type: uint8_t
+    restore_value: true
+    initial_value: "0"
+
+##################
+#     KEYPAD     #
+##################
+wiegand:
+  - id: keypad
+    d0: ${keypad_d0}
+    d1: ${keypad_d1}
+    on_key:
+      - lambda: |-
+          if (x == 10) {          // * : arm home
+            id(pincode_reader).clear();
+            id(incorrect_codes) = 0;
+            id(alarm_states).transition("arm_home");
+          } else if (x == 12) {   // # : arm away
+            id(pincode_reader).clear();
+            id(incorrect_codes) = 0;
+            id(alarm_states).transition("arm_away");
+          }
+    on_tag:
+      - homeassistant.tag_scanned: !lambda 'return x;'
+
+key_collector:
+  - id: pincode_reader
+    source_id: keypad
+    min_length: 4
+    max_length: 4
+    end_keys: "*"
+    end_key_required: false
+    clear_keys: "*"
+    allowed_keys: "0123456789"
+    timeout: 5s
+    on_result:
+      - script.execute:
+          id: check_code
+          code: !lambda 'return x;'
+
+##################
+#    ENTITIES    #
+##################
+text_sensor:
+  - platform: state_machine
+    id: alarm_state_text
+    name: ${friendly_name} Alarm State
+
+  - platform: ethernet_info
+    ip_address:
+      name: Ethernet IP Address
+      entity_category: diagnostic
+
+  - platform: template
+    id: device_id
+    name: Device ID
+    entity_category: diagnostic
+    update_interval: never
+
+sensor:
+  - platform: template
+    id: incorrect_codes_sensor
+    name: ${friendly_name} Incorrect Codes
+    lambda: return id(incorrect_codes);
+    update_interval: never
+
+  - platform: uptime
+    id: uptime_sensor
+    name: Uptime
+    entity_category: diagnostic
+
+button:
+  - platform: template
+    name: Arm Away
+    on_press:
+      - state_machine.transition: arm_away
+  - platform: template
+    name: Arm Home
+    on_press:
+      - state_machine.transition: arm_home
+  - platform: template
+    name: Disarm
+    on_press:
+      - state_machine.transition: disarm
+
+number:
+  - platform: template
+    id: arming_timeout
+    name: ${friendly_name} Arming Timeout
+    restore_value: true
+    initial_value: 10
+    min_value: 0
+    max_value: 300
+    step: 1
+    mode: box
+    unit_of_measurement: seconds
+    optimistic: true
+    entity_category: config
+
+  - platform: template
+    id: pending_timeout
+    name: ${friendly_name} Pending Timeout
+    restore_value: true
+    initial_value: 60
+    min_value: 0
+    max_value: 300
+    step: 1
+    mode: box
+    unit_of_measurement: seconds
+    optimistic: true
+    entity_category: config
+
+  - platform: template
+    id: trigger_timeout
+    name: ${friendly_name} Trigger Timeout
+    restore_value: true
+    initial_value: 5
+    min_value: 1
+    max_value: 20
+    step: 1
+    mode: box
+    unit_of_measurement: minutes
+    optimistic: true
+    entity_category: config
