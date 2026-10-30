@@ -20,8 +20,8 @@ substitutions:
   # name:  what the zone is (shown in Home Assistant)
   # alarm: true  -> opening it while armed sets off the alarm
   #        false -> reported to Home Assistant only (flood sensors, unused zones)
-  zone01: { name: "Front Door", alarm: true }
-  zone02: { name: "Mud Room Door", alarm: true }
+  zone01: { name: "Mud Room Door", alarm: true }
+  zone02: { name: "Front Door", alarm: true }
   zone03: { name: "Maintenance Hall Door", alarm: true }
   zone04: { name: "Garage Front Door", alarm: true }
   zone05: { name: "Garage Rear Door", alarm: true }
@@ -566,8 +566,11 @@ wiegand:
   - id: keypad
     d0: ${keypad_d0}
     d1: ${keypad_d1}
+    on_raw:
+      - lambda: ESP_LOGI("RAW", "received raw %d bits, value %llx", bits, value);
     on_key:
       - lambda: |-
+          ESP_LOGI("KEY", "received key %d", x);
           if (x == 10) {          // * : arm home
             id(pincode_reader).clear();
             id(incorrect_codes) = 0;
@@ -578,6 +581,7 @@ wiegand:
             id(alarm_states).transition("arm_away");
           }
     on_tag:
+      - lambda: ESP_LOGI("TAG", "received tag %s", x.c_str());
       - homeassistant.tag_scanned: !lambda 'return x;'
 
 key_collector:
@@ -590,6 +594,10 @@ key_collector:
     clear_keys: "*"
     allowed_keys: "0123456789"
     timeout: 5s
+    on_progress:
+      - logger.log:
+          format: "input progress: '%s'"
+          args: [ 'x.c_str()' ]
     on_result:
       - script.execute:
           id: check_code
