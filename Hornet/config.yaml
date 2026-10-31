@@ -20,9 +20,9 @@ substitutions:
   # name:  what the zone is (shown in Home Assistant)
   # alarm: true  -> opening it while armed sets off the alarm
   #        false -> reported to Home Assistant only (flood sensors, unused zones)
-  zone01: { name: "Mud Room Door", alarm: true }
-  zone02: { name: "Front Door", alarm: true }
-  zone03: { name: "Maintenance Hall Door", alarm: true }
+  zone01: { name: "Maintenance Hall Door", alarm: true }
+  zone02: { name: "Mud Room Door", alarm: true }
+  zone03: { name: "Front Door", alarm: true }
   zone04: { name: "Garage Front Door", alarm: true }
   zone05: { name: "Garage Rear Door", alarm: true }
   zone06: { name: "Garage Stairwell Door", alarm: true }
